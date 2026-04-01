@@ -20,6 +20,6 @@ MIT License — see LICENSE for details.
 
 ## About
 
-Matthew Gonzalez Nieves | [LinkedIn](https://linkedin.com/in/matthewgonieves) | [Website](https://mgntechvault.com) (coming soon)
+Matthew Gonzalez Nieves | [LinkedIn](www.linkedin.com/in/matthew-gonzalez-nieves-13b10618a) | [Website](https://mgntechvault.com) (coming soon)
 
 Working toward Microsoft MVP status in Azure.
