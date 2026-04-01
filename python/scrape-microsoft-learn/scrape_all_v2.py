@@ -1,18 +1,32 @@
 #!/usr/bin/env python3
-"""Microsoft Learn scraper v2 — haalt leerpaden op als Markdown, DOCX of TXT.
+"""Microsoft Learn Scraper v2 — downloads learning paths as Markdown, DOCX, or TXT.
 
-Gebruik:
-    python scrape_all_v2.py --format markdown       # verplichte flag
+Author:  Matthew Gonzalez Nieves
+Version: 1.0.0
+Date:    31-03-2025
+License: MIT
+Website: https://mgntechvault.com
+
+Purpose:
+    This tool is intended for personal offline study using AI tools such as
+    Microsoft Copilot Notebook and Google NotebookLM. Export your Microsoft Learn
+    learning paths and feed them directly to your AI notebook of choice.
+
+    This script is NOT intended to stress or flood Microsoft Learn (DDoS).
+    Use it responsibly and only for your own study materials.
+
+Usage:
+    python scrape_all_v2.py --format markdown       # required flag
     python scrape_all_v2.py --format docx
     python scrape_all_v2.py --format txt
-    python scrape_all_v2.py                         # interactieve keuze als --format ontbreekt
-    python scrape_all_v2.py --config mijn.yaml      # andere config
+    python scrape_all_v2.py                         # interactive choice if --format is omitted
+    python scrape_all_v2.py --config custom.yaml    # use a different config file
     python scrape_all_v2.py --urls URL1 URL2        # override URLs via CLI
-    python scrape_all_v2.py --output bestand        # override bestandsnaam (extensie auto-bepaald)
-    python scrape_all_v2.py --headed                # browser zichtbaar
+    python scrape_all_v2.py --output filename       # override output name (extension auto-determined)
+    python scrape_all_v2.py --headed                # show browser window
     python scrape_all_v2.py -v                      # verbose logging
 
-Vereisten:
+Requirements:
     pip install playwright pyyaml python-docx
     playwright install chromium
 """
@@ -35,7 +49,7 @@ logger = logging.getLogger(__name__)
 VALID_FORMATS = ("markdown", "docx", "txt")
 FORMAT_EXTENSIONS = {"markdown": ".md", "docx": ".docx", "txt": ".txt"}
 
-# --- Selectors (centraal, zodat wijzigingen op één plek gebeuren) ---
+# --- Selectors (centralised so changes only need to happen in one place) ---
 CONTENT_SELECTOR = "#unit-inner-section"
 FALLBACK_CONTENT_SELECTOR = "div[role='main']"
 UNIT_LIST_SELECTOR = "#unit-list"
@@ -49,7 +63,7 @@ NOISE_SELECTORS = (
 MIN_CONTENT_LENGTH = 50
 
 
-# ── Datamodellen ──────────────────────────────────────────────
+# ── Data models ───────────────────────────────────────────────
 
 
 @dataclass
@@ -84,24 +98,24 @@ class ScrapeStats:
 
     def summary(self) -> str:
         lines = [
-            f"Paden verwerkt:    {self.paths}",
-            f"Modules verwerkt:  {self.modules}",
-            f"Units geschrapt:   {self.units_scraped}",
-            f"Units overgeslagen: {self.units_skipped}",
-            f"Navigatiefouten:   {self.nav_failures}",
+            f"Paths processed:   {self.paths}",
+            f"Modules processed: {self.modules}",
+            f"Units scraped:     {self.units_scraped}",
+            f"Units skipped:     {self.units_skipped}",
+            f"Navigation errors: {self.nav_failures}",
         ]
         if self.failed_urls:
-            lines.append("Mislukte URLs:")
+            lines.append("Failed URLs:")
             for url in self.failed_urls:
                 lines.append(f"  - {url}")
         return "\n".join(lines)
 
 
-# ── Hulpfuncties ──────────────────────────────────────────────
+# ── Utility functions ─────────────────────────────────────────
 
 
 def clean_text(text: str) -> str:
-    """Verwijder overbodige lege regels."""
+    """Remove redundant blank lines."""
     if not text:
         return ""
     return re.sub(r"\n\s*\n", "\n\n", text.strip())
@@ -111,7 +125,7 @@ def clean_text(text: str) -> str:
 
 
 def safe_goto(page: Page, url: str, *, timeout: int = 20_000, retries: int = 3) -> bool:
-    """Navigeer naar URL met exponential backoff bij fouten."""
+    """Navigate to a URL with exponential backoff on failure."""
     for attempt in range(retries):
         try:
             page.goto(url, wait_until="domcontentloaded", timeout=timeout)
@@ -119,37 +133,37 @@ def safe_goto(page: Page, url: str, *, timeout: int = 20_000, retries: int = 3) 
         except Exception as e:
             wait = 2 ** attempt
             logger.warning(
-                "Navigatie mislukt (%d/%d) %s — %s, wacht %ds",
+                "Navigation failed (%d/%d) %s — %s, retrying in %ds",
                 attempt + 1, retries, url, e, wait,
             )
             time.sleep(wait)
-    logger.error("Definitief mislukt: %s", url)
+    logger.error("Permanently failed: %s", url)
     return False
 
 
 def wait_for_content(page: Page, timeout: int = 10_000) -> bool:
-    """Wacht tot de content-selector zichtbaar is."""
+    """Wait until the content selector is visible on the page."""
     try:
         page.wait_for_selector(CONTENT_SELECTOR, state="attached", timeout=timeout)
         return True
     except PwTimeout:
-        logger.debug("Content-selector niet gevonden binnen timeout op %s", page.url)
+        logger.debug("Content selector not found within timeout on %s", page.url)
         return False
 
 
 def dismiss_cookie_banner(page: Page) -> None:
-    """Klik cookie-banner weg als die er is."""
+    """Click away the cookie banner if present."""
     for selector in ("button#onetrust-accept-btn-handler", "button.accept-cookies"):
         try:
             page.click(selector, timeout=2000)
-            logger.debug("Cookie-banner weggeklikt via %s", selector)
+            logger.debug("Cookie banner dismissed via %s", selector)
             return
         except PwTimeout:
             continue
 
 
 def extract_content(page: Page) -> str | None:
-    """Extraheert content via een DOM-clone — muteert het origineel niet."""
+    """Extract content via a DOM clone — does not mutate the original."""
     noise_css = ", ".join(NOISE_SELECTORS)
     result = page.evaluate(
         """([contentSel, fallbackSel, noiseSel]) => {
@@ -167,16 +181,16 @@ def extract_content(page: Page) -> str | None:
     return None
 
 
-# ── URL-extractie ─────────────────────────────────────────────
+# ── URL extraction ────────────────────────────────────────────
 
 
 def normalize_url(base: str, href: str) -> str:
-    """Maak een volledige URL zonder query-params, met trailing slash gestript."""
+    """Build a full URL without query params, with trailing slash stripped."""
     return urljoin(base, href).split("?")[0].rstrip("/")
 
 
 def get_module_urls(page: Page) -> list[str]:
-    """Haal unieke module-URLs op van een learning-path pagina."""
+    """Retrieve unique module URLs from a learning path page."""
     links = page.query_selector_all("a[href*='/modules/']")
     seen: set[str] = set()
     urls: list[str] = []
@@ -192,10 +206,10 @@ def get_module_urls(page: Page) -> list[str]:
 
 
 def get_unit_urls(page: Page, module_url: str) -> list[str]:
-    """Haal unieke unit-URLs op van een module-pagina."""
+    """Retrieve unique unit URLs from a module page."""
     container = page.query_selector(UNIT_LIST_SELECTOR)
     if not container:
-        logger.debug("Selector '%s' niet gevonden, fallback op <main>", UNIT_LIST_SELECTOR)
+        logger.debug("Selector '%s' not found, falling back to <main>", UNIT_LIST_SELECTOR)
         container = page.query_selector("main")
     if not container:
         return []
@@ -208,7 +222,7 @@ def get_unit_urls(page: Page, module_url: str) -> list[str]:
         if not href:
             continue
         full = normalize_url(page.url, href)
-        # Skip de module-link zelf en externe links
+        # Skip the module link itself and external links
         if full == normalized_module:
             continue
         if full not in seen:
@@ -221,38 +235,38 @@ def get_unit_urls(page: Page, module_url: str) -> list[str]:
 
 
 def scrape_unit(page: Page, url: str) -> Unit | None:
-    """Scrape één unit (les) en retourneer een Unit of None bij falen."""
+    """Scrape a single unit (lesson) and return a Unit, or None on failure."""
     if not safe_goto(page, url):
         return None
     wait_for_content(page)
 
     h1 = page.query_selector("h1")
-    title = h1.inner_text().strip() if h1 else "Onbekende les"
+    title = h1.inner_text().strip() if h1 else "Unknown lesson"
     content = extract_content(page)
 
     if not content:
-        logger.info("  Geen bruikbare content: %s", url)
+        logger.info("  No usable content: %s", url)
         return None
     return Unit(title=title, url=url, content=content)
 
 
 def scrape_module(page: Page, url: str, stats: ScrapeStats, seen_urls: set[str]) -> Module | None:
-    """Scrape een module met al zijn units."""
+    """Scrape a module including all its units."""
     if not safe_goto(page, url):
         stats.nav_failures += 1
         stats.failed_urls.append(url)
         return None
 
     h1 = page.query_selector("h1")
-    title = h1.inner_text().strip() if h1 else "Onbekende module"
+    title = h1.inner_text().strip() if h1 else "Unknown module"
     module = Module(title=title, url=url)
 
     unit_urls = get_unit_urls(page, url)
-    logger.info("    %d units gevonden in '%s'", len(unit_urls), title)
+    logger.info("    %d units found in '%s'", len(unit_urls), title)
 
     for idx, u_url in enumerate(unit_urls, 1):
         if u_url in seen_urls:
-            logger.debug("    Unit al gezien, skip: %s", u_url)
+            logger.debug("    Unit already seen, skipping: %s", u_url)
             continue
         seen_urls.add(u_url)
 
@@ -269,22 +283,22 @@ def scrape_module(page: Page, url: str, stats: ScrapeStats, seen_urls: set[str])
 
 
 def scrape_path(page: Page, url: str, stats: ScrapeStats, seen_urls: set[str]) -> LearningPath | None:
-    """Scrape een learning path met al zijn modules en units."""
-    logger.info("Leerpad: %s", url.split("/")[-2])
+    """Scrape a learning path including all its modules and units."""
+    logger.info("Learning path: %s", url.split("/")[-2])
     if not safe_goto(page, url):
         stats.nav_failures += 1
         stats.failed_urls.append(url)
         return None
 
     h1 = page.query_selector("h1")
-    title = h1.inner_text().strip() if h1 else "Onbekend pad"
+    title = h1.inner_text().strip() if h1 else "Unknown path"
     path = LearningPath(title=title, url=url)
 
     module_urls = get_module_urls(page)
-    logger.info("  %d modules gevonden in '%s'", len(module_urls), title)
+    logger.info("  %d modules found in '%s'", len(module_urls), title)
 
     for m_idx, m_url in enumerate(module_urls, 1):
-        logger.info("  [%d/%d] Module verwerken...", m_idx, len(module_urls))
+        logger.info("  [%d/%d] Processing module...", m_idx, len(module_urls))
         module = scrape_module(page, m_url, stats, seen_urls)
         if module and module.units:
             path.modules.append(module)
@@ -297,7 +311,7 @@ def scrape_path(page: Page, url: str, stats: ScrapeStats, seen_urls: set[str]) -
 
 
 def _atomic_write_text(tmp: Path, output: Path, content_fn) -> None:
-    """Schrijf via een tijdelijk bestand en rename atomisch bij succes."""
+    """Write via a temporary file and atomically rename on success."""
     with open(tmp, "w", encoding="utf-8") as f:
         content_fn(f)
     tmp.replace(output)
@@ -306,25 +320,25 @@ def _atomic_write_text(tmp: Path, output: Path, content_fn) -> None:
 def write_markdown(
     paths: list[LearningPath],
     output: Path,
-    title: str = "AZ-305 Cursusmateriaal",
+    title: str = "AZ-305 Course Material",
 ) -> None:
-    """Schrijf naar Markdown (.md). Atomisch via .tmp bestand."""
+    """Write to Markdown (.md). Atomic write via .tmp file."""
     tmp = output.with_suffix(".tmp")
 
     def _write(f):
         f.write(f"# {title}\n\n")
-        f.write(f"Gegenereerd: {datetime.now().strftime('%Y-%m-%d %H:%M')}\n\n")
+        f.write(f"Generated: {datetime.now().strftime('%Y-%m-%d %H:%M')}\n\n")
 
-        f.write("## Inhoudsopgave\n\n")
+        f.write("## Table of Contents\n\n")
         for lp in paths:
             f.write(f"- **{lp.title}**\n")
             for mod in lp.modules:
-                f.write(f"  - {mod.title} ({len(mod.units)} lessen)\n")
+                f.write(f"  - {mod.title} ({len(mod.units)} lessons)\n")
         f.write("\n---\n\n")
 
         for lp in paths:
             f.write(f"## {lp.title}\n\n")
-            f.write(f"Bron: {lp.url}\n\n")
+            f.write(f"Source: {lp.url}\n\n")
             for mod in lp.modules:
                 f.write(f"### {mod.title}\n\n")
                 for unit in mod.units:
@@ -334,15 +348,15 @@ def write_markdown(
             f.flush()
 
     _atomic_write_text(tmp, output, _write)
-    logger.info("Markdown geschreven naar %s", output)
+    logger.info("Markdown written to %s", output)
 
 
 def write_txt(
     paths: list[LearningPath],
     output: Path,
-    title: str = "AZ-305 Cursusmateriaal",
+    title: str = "AZ-305 Course Material",
 ) -> None:
-    """Schrijf naar platte tekst (.txt). Atomisch via .tmp bestand."""
+    """Write to plain text (.txt). Atomic write via .tmp file."""
     tmp = output.with_suffix(".tmp")
     separator = "=" * 72
     thin_sep = "-" * 72
@@ -350,73 +364,73 @@ def write_txt(
     def _write(f):
         f.write(f"{title}\n")
         f.write(f"{separator}\n")
-        f.write(f"Gegenereerd: {datetime.now().strftime('%Y-%m-%d %H:%M')}\n\n")
+        f.write(f"Generated: {datetime.now().strftime('%Y-%m-%d %H:%M')}\n\n")
 
-        f.write("INHOUDSOPGAVE\n")
+        f.write("TABLE OF CONTENTS\n")
         f.write(f"{thin_sep}\n")
         for lp in paths:
             f.write(f"  {lp.title}\n")
             for mod in lp.modules:
-                f.write(f"    - {mod.title} ({len(mod.units)} lessen)\n")
+                f.write(f"    - {mod.title} ({len(mod.units)} lessons)\n")
         f.write(f"\n{separator}\n\n")
 
         for lp in paths:
             f.write(f"{lp.title.upper()}\n")
             f.write(f"{separator}\n")
-            f.write(f"Bron: {lp.url}\n\n")
+            f.write(f"Source: {lp.url}\n\n")
             for mod in lp.modules:
                 f.write(f"{mod.title}\n")
                 f.write(f"{thin_sep}\n\n")
                 for unit in mod.units:
                     f.write(f"  {unit.title}\n")
                     f.write(f"  {'·' * (len(unit.title) + 2)}\n\n")
-                    # Inspringen van content-regels
+                    # Indent each content line
                     for line in unit.content.splitlines():
                         f.write(f"  {line}\n")
                     f.write(f"\n{thin_sep}\n\n")
             f.flush()
 
     _atomic_write_text(tmp, output, _write)
-    logger.info("TXT geschreven naar %s", output)
+    logger.info("TXT written to %s", output)
 
 
 def write_docx(
     paths: list[LearningPath],
     output: Path,
-    title: str = "AZ-305 Cursusmateriaal",
+    title: str = "AZ-305 Course Material",
 ) -> None:
-    """Schrijf naar Word-document (.docx)."""
+    """Write to a Word document (.docx)."""
     try:
         from docx import Document
         from docx.shared import Pt, RGBColor
         from docx.enum.text import WD_ALIGN_PARAGRAPH
     except ImportError:
         logger.error(
-            "python-docx is niet geïnstalleerd. Voer uit: pip install python-docx"
+            "python-docx is not installed. Run: pip install python-docx"
         )
         raise SystemExit(1)
 
     doc = Document()
 
-    # Documenttitel
+    # Document title
     heading = doc.add_heading(title, level=0)
     heading.alignment = WD_ALIGN_PARAGRAPH.CENTER
 
-    # Datum
+    # Generation date
     date_para = doc.add_paragraph(
-        f"Gegenereerd: {datetime.now().strftime('%Y-%m-%d %H:%M')}"
+        f"Generated: {datetime.now().strftime('%Y-%m-%d %H:%M')}"
     )
     date_para.alignment = WD_ALIGN_PARAGRAPH.CENTER
     doc.add_paragraph()
 
-    # Inhoudsopgave (tekstueel)
-    doc.add_heading("Inhoudsopgave", level=1)
+    # Table of contents (text-based)
+    doc.add_heading("Table of Contents", level=1)
     for lp in paths:
         toc_path = doc.add_paragraph(style="List Bullet")
         toc_path.add_run(lp.title).bold = True
         for mod in lp.modules:
             toc_mod = doc.add_paragraph(style="List Bullet 2")
-            toc_mod.add_run(f"{mod.title} ({len(mod.units)} lessen)")
+            toc_mod.add_run(f"{mod.title} ({len(mod.units)} lessons)")
 
     doc.add_page_break()
 
@@ -424,7 +438,7 @@ def write_docx(
     for lp in paths:
         doc.add_heading(lp.title, level=1)
         source_para = doc.add_paragraph()
-        source_para.add_run("Bron: ").bold = True
+        source_para.add_run("Source: ").bold = True
         source_para.add_run(lp.url)
 
         for mod in lp.modules:
@@ -432,7 +446,7 @@ def write_docx(
 
             for unit in mod.units:
                 doc.add_heading(unit.title, level=3)
-                # Splits content op lege regels — elk blok = eigen paragraaf
+                # Split content on blank lines — each block becomes its own paragraph
                 for block in unit.content.split("\n\n"):
                     block = block.strip()
                     if block:
@@ -443,7 +457,7 @@ def write_docx(
     tmp = output.with_suffix(".tmp")
     doc.save(tmp)
     tmp.replace(output)
-    logger.info("DOCX geschreven naar %s", output)
+    logger.info("DOCX written to %s", output)
 
 
 def write_output(
@@ -452,7 +466,7 @@ def write_output(
     fmt: str,
     title: str,
 ) -> None:
-    """Dispatcher: kies de juiste writer op basis van het opgegeven formaat."""
+    """Dispatcher: select the correct writer based on the specified format."""
     writers = {
         "markdown": write_markdown,
         "txt": write_txt,
@@ -465,57 +479,57 @@ def write_output(
 
 
 def load_config(path: str) -> dict:
-    """Laad YAML configuratie. Retourneert lege dict als bestand niet bestaat."""
+    """Load YAML configuration. Returns empty dict if file does not exist."""
     try:
         with open(path) as f:
             return yaml.safe_load(f) or {}
     except FileNotFoundError:
-        logger.debug("Config bestand '%s' niet gevonden, gebruik defaults", path)
+        logger.debug("Config file '%s' not found, using defaults", path)
         return {}
 
 
 def ask_format_interactively() -> str:
-    """Vraag de gebruiker interactief om een outputformaat als --format niet is opgegeven."""
+    """Ask the user interactively for an output format when --format is not provided."""
     options = {"1": "markdown", "2": "docx", "3": "txt"}
     print()
-    print("Kies een outputformaat")
+    print("Choose an output format")
     print("=" * 42)
     print("  1  ->  Markdown  (.md)")
     print("  2  ->  Word      (.docx)")
-    print("  3  ->  Platte tekst (.txt)")
+    print("  3  ->  Plain text (.txt)")
     print()
 
     while True:
         try:
-            keuze = input("Voer 1, 2 of 3 in (of typ 'markdown', 'docx', 'txt'): ").strip().lower()
+            choice = input("Enter 1, 2 or 3 (or type 'markdown', 'docx', 'txt'): ").strip().lower()
         except (EOFError, KeyboardInterrupt):
-            print("\nAfgebroken.")
+            print("\nCancelled.")
             raise SystemExit(0)
 
-        # Accepteer zowel cijfer als naam
-        if keuze in options:
-            gekozen = options[keuze]
-            print(f"-> Gekozen formaat: {gekozen}\n")
-            return gekozen
-        if keuze in VALID_FORMATS:
-            print(f"-> Gekozen formaat: {keuze}\n")
-            return keuze
+        # Accept both number and name
+        if choice in options:
+            selected = options[choice]
+            print(f"-> Selected format: {selected}\n")
+            return selected
+        if choice in VALID_FORMATS:
+            print(f"-> Selected format: {choice}\n")
+            return choice
 
-        print(f"  Ongeldige keuze '{keuze}'. Kies 1, 2, 3 of typ het formaat.")
+        print(f"  Invalid choice '{choice}'. Choose 1, 2, 3 or type the format name.")
 
 
 def resolve_format(raw: str | None) -> str:
-    """Valideer het formaat. Bij None: vraag interactief. Bij ongeldig: fout + exit."""
+    """Validate the format. If None: ask interactively. If invalid: error + exit."""
     if raw is None:
         return ask_format_interactively()
     fmt = raw.strip().lower()
     if fmt not in VALID_FORMATS:
         print(
-            f"\nFout: '{raw}' is geen geldig formaat.\n"
-            f"Kies één van: {', '.join(VALID_FORMATS)}\n\n"
-            f"Gebruik:  python scrape_all_v2.py --format markdown\n"
-            f"          python scrape_all_v2.py --format docx\n"
-            f"          python scrape_all_v2.py --format txt\n",
+            f"\nError: '{raw}' is not a valid format.\n"
+            f"Choose one of: {', '.join(VALID_FORMATS)}\n\n"
+            f"Usage:  python scrape_all_v2.py --format markdown\n"
+            f"        python scrape_all_v2.py --format docx\n"
+            f"        python scrape_all_v2.py --format txt\n",
             file=sys.stderr,
         )
         raise SystemExit(1)
@@ -525,15 +539,15 @@ def resolve_format(raw: str | None) -> str:
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(
         description=(
-            "Microsoft Learn scraper — haalt leerpaden op als Markdown, DOCX of TXT.\n\n"
-            "  --format is verplicht. Als je het weglaat word je interactief om een keuze gevraagd."
+            "Microsoft Learn Scraper — downloads learning paths as Markdown, DOCX, or TXT.\n\n"
+            "  --format is required. If omitted you will be prompted interactively."
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=(
-            "Voorbeelden:\n"
+            "Examples:\n"
             "  python scrape_all_v2.py --format markdown\n"
-            "  python scrape_all_v2.py --format docx --output MijnCursus\n"
-            "  python scrape_all_v2.py --format txt --config andere.yaml -v\n"
+            "  python scrape_all_v2.py --format docx --output MyCourse\n"
+            "  python scrape_all_v2.py --format txt --config other.yaml -v\n"
         ),
     )
     p.add_argument(
@@ -541,13 +555,13 @@ def parse_args() -> argparse.Namespace:
         dest="fmt",
         choices=VALID_FORMATS,
         metavar="FORMAT",
-        help=f"Outputformaat — verplicht. Kies uit: {', '.join(VALID_FORMATS)}",
+        help=f"Output format — required. Choose from: {', '.join(VALID_FORMATS)}",
     )
-    p.add_argument("--config", default="config.yaml", help="YAML config bestand (default: config.yaml)")
-    p.add_argument("--urls", nargs="+", help="Learning path URLs (overschrijft config)")
-    p.add_argument("--output", help="Bestandsnaam zonder extensie, of volledig pad (extensie wordt automatisch bepaald)")
-    p.add_argument("--title", help="Titel van het output document")
-    p.add_argument("--headed", action="store_true", help="Browser zichtbaar maken (voor debugging)")
+    p.add_argument("--config", default="config.yaml", help="YAML config file (default: config.yaml)")
+    p.add_argument("--urls", nargs="+", help="Learning path URLs (overrides config)")
+    p.add_argument("--output", help="Output filename without extension, or full path (extension is auto-determined)")
+    p.add_argument("--title", help="Title of the output document")
+    p.add_argument("--headed", action="store_true", help="Show the browser window (for debugging)")
     p.add_argument("-v", "--verbose", action="store_true", help="Verbose logging (debug level)")
     return p.parse_args()
 
@@ -567,24 +581,24 @@ def main() -> None:
         ],
     )
 
-    # ── Formaat bepalen (verplicht — interactief als niet opgegeven) ──
+    # ── Determine format (required — interactive if not provided) ─────────
     fmt = resolve_format(args.fmt)
 
-    # ── Config laden — CLI args hebben prioriteit boven YAML ──────────
+    # ── Load config — CLI args take priority over YAML ────────────────────
     cfg = load_config(args.config)
     urls = args.urls or cfg.get("paths", [])
-    title = args.title or cfg.get("title", "AZ-305 Cursusmateriaal")
+    title = args.title or cfg.get("title", "AZ-305 Course Material")
 
-    # Output bestandsnaam bepalen — extensie volgt altijd het formaat
+    # Determine output filename — extension always follows the format
     raw_output = args.output or cfg.get("output", "output")
     output_path = Path(raw_output).with_suffix(FORMAT_EXTENSIONS[fmt])
 
     if not urls:
-        logger.error("Geen URLs opgegeven via --urls of %s", args.config)
+        logger.error("No URLs provided via --urls or %s", args.config)
         raise SystemExit(1)
 
     logger.info(
-        "Start scraper — formaat: %s | %d leerpaden | output: %s",
+        "Starting scraper — format: %s | %d learning paths | output: %s",
         fmt, len(urls), output_path,
     )
 
@@ -601,7 +615,7 @@ def main() -> None:
         )
         page = context.new_page()
 
-        # Cookie-banner afhandelen op eerste navigatie
+        # Handle cookie banner on first navigation
         if urls:
             safe_goto(page, urls[0])
             dismiss_cookie_banner(page)
@@ -617,10 +631,10 @@ def main() -> None:
     if results:
         write_output(results, output_path, fmt=fmt, title=title)
     else:
-        logger.warning("Geen resultaten om te schrijven.")
+        logger.warning("No results to write.")
 
-    # Samenvatting
-    logger.info("Klaar!\n%s", stats.summary())
+    # Summary
+    logger.info("Done!\n%s", stats.summary())
 
 
 if __name__ == "__main__":

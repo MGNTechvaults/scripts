@@ -1,8 +1,16 @@
 # Microsoft Learn Scraper
 
+**Author:** Matthew Gonzalez
+**Version:** 1.0.0
+**Date:** 31-03-2025
+**License:** MIT
+**Website:** [mgntechvault.com](https://mgntechvault.com)
+
 Download Microsoft Learn training paths and convert them to Markdown, DOCX, or TXT files.
 
-Useful for offline learning, exporting course content, or preparing study materials.
+Intended for personal offline study using AI tools such as **Microsoft Copilot Notebook** and **Google NotebookLM** — export your learning paths and feed them directly to your AI notebook for smarter studying.
+
+> **Note:** This tool is not intended to stress or flood Microsoft Learn (DDoS). Use it responsibly and only for your own study materials.
 
 ## Requirements
 
