@@ -1,0 +1,11 @@
+title: "AZ-305 Cursusmateriaal"
+output: "AZ305_Definitief"   # extensie wordt automatisch bepaald op basis van --format
+# format: markdown           # optioneel: zet hier een default formaat (markdown/docx/txt)
+
+paths:
+  - https://learn.microsoft.com/en-us/training/paths/microsoft-azure-architect-design-prerequisites/
+  - https://learn.microsoft.com/en-us/training/paths/design-identity-governance-monitor-solutions/
+  - https://learn.microsoft.com/en-us/training/paths/design-business-continuity-solutions/
+  - https://learn.microsoft.com/en-us/training/paths/design-data-storage-solutions/
+  - https://learn.microsoft.com/en-us/training/paths/design-infrastructure-solutions/
+  - https://learn.microsoft.com/en-us/training/paths/azure-well-architected-framework/
